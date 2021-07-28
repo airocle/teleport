@@ -1570,6 +1570,7 @@ func (process *TeleportProcess) newAccessCache(cfg accessCacheConfig) (*cache.Ca
 		DynamicAccess:   cfg.services,
 		Presence:        cfg.services,
 		Restrictions:    cfg.services,
+		Databases:       cfg.services,
 		AppSession:      cfg.services,
 		WindowsDesktops: cfg.services,
 		WebSession:      cfg.services.WebSessions(),

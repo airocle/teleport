@@ -81,6 +81,7 @@ var DefaultImplicitRules = []types.Rule{
 	types.NewRule(types.KindRemoteCluster, RO()),
 	types.NewRule(types.KindKubeService, RO()),
 	types.NewRule(types.KindDatabaseServer, RO()),
+	types.NewRule(types.KindDatabase, RO()),
 }
 
 // DefaultCertAuthorityRules provides access the minimal set of resources

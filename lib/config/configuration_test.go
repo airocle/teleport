@@ -307,6 +307,13 @@ func TestConfigReading(t *testing.T) {
 					DynamicLabels: CommandLabels,
 				},
 			},
+			Selectors: []Selector{
+				{
+					MatchLabels: map[string]apiutils.Strings{
+						"*": {"*"},
+					},
+				},
+			},
 		},
 		Metrics: Metrics{
 			Service: Service{
@@ -995,6 +1002,11 @@ func makeConfigFixture() string {
 			DynamicLabels: CommandLabels,
 		},
 	}
+	conf.Databases.Selectors = []Selector{
+		{
+			MatchLabels: map[string]apiutils.Strings{"*": {"*"}},
+		},
+	}
 
 	// Metrics service.
 	conf.Metrics.EnabledFlag = "yes"
@@ -1400,6 +1412,9 @@ func TestDatabaseConfig(t *testing.T) {
 			inConfigString: `
 db_service:
   enabled: true
+  selectors:
+  - match_labels:
+      '*': '*'
   databases:
   - name: foo
     protocol: postgres
@@ -1497,10 +1512,11 @@ func TestDatabaseCLIFlags(t *testing.T) {
 				Labels:           "env=test,hostname=[1h:hostname]",
 			},
 			outDatabase: service.Database{
-				Name:         "foo",
-				Protocol:     defaults.ProtocolPostgres,
-				URI:          "localhost:5432",
-				StaticLabels: map[string]string{"env": "test"},
+				Name:     "foo",
+				Protocol: defaults.ProtocolPostgres,
+				URI:      "localhost:5432",
+				StaticLabels: map[string]string{"env": "test",
+					types.OriginLabel: types.OriginConfigFile},
 				DynamicLabels: services.CommandLabels{
 					"hostname": &types.CommandLabelV2{
 						Period:  types.Duration(time.Hour),
@@ -1550,7 +1566,8 @@ func TestDatabaseCLIFlags(t *testing.T) {
 				AWS: service.DatabaseAWS{
 					Region: "us-east-1",
 				},
-				StaticLabels:  map[string]string{},
+				StaticLabels: map[string]string{
+					types.OriginLabel: types.OriginConfigFile},
 				DynamicLabels: services.CommandLabels{},
 			},
 		},
@@ -1573,7 +1590,8 @@ func TestDatabaseCLIFlags(t *testing.T) {
 						ClusterID: "redshift-cluster-1",
 					},
 				},
-				StaticLabels:  map[string]string{},
+				StaticLabels: map[string]string{
+					types.OriginLabel: types.OriginConfigFile},
 				DynamicLabels: services.CommandLabels{},
 			},
 		},
@@ -1596,7 +1614,8 @@ func TestDatabaseCLIFlags(t *testing.T) {
 					ProjectID:  "gcp-project-1",
 					InstanceID: "gcp-instance-1",
 				},
-				StaticLabels:  map[string]string{},
+				StaticLabels: map[string]string{
+					types.OriginLabel: types.OriginConfigFile},
 				DynamicLabels: services.CommandLabels{},
 			},
 		},

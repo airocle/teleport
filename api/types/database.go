@@ -27,8 +27,8 @@ import (
 
 // Database represents a database proxied by a database server.
 type Database interface {
-	// Resource provides common resource methods.
-	Resource
+	// ResourceWithOrigin provides common resource methods.
+	ResourceWithOrigin
 	// GetNamespace returns the database namespace.
 	GetNamespace() string
 	// GetStaticLabels returns the database static labels.
@@ -114,6 +114,16 @@ func (d *DatabaseV3) SetResourceID(id int64) {
 // GetMetadata returns the database resource metadata.
 func (d *DatabaseV3) GetMetadata() Metadata {
 	return d.Metadata
+}
+
+// Origin returns the origin value of the resource.
+func (d *DatabaseV3) Origin() string {
+	return d.Metadata.Origin()
+}
+
+// SetOrigin sets the origin value of the resource.
+func (d *DatabaseV3) SetOrigin(origin string) {
+	d.Metadata.SetOrigin(origin)
 }
 
 // GetNamespace returns the database resource namespace.
@@ -346,6 +356,37 @@ func DeduplicateDatabases(databases []Database) (result []Database) {
 	}
 	return result
 }
+
+// Databases is a list of database resources.
+type Databases []Database
+
+// Find returns database with the specified name or nil.
+func (d Databases) Find(name string) Database {
+	for _, database := range d {
+		if database.GetName() == name {
+			return database
+		}
+	}
+	return nil
+}
+
+// ToMap returns these databases as a map keyed by database name.
+func (d Databases) ToMap() map[string]Database {
+	m := make(map[string]Database)
+	for _, database := range d {
+		m[database.GetName()] = database
+	}
+	return m
+}
+
+// Len returns the slice length.
+func (d Databases) Len() int { return len(d) }
+
+// Less compares databases by name.
+func (d Databases) Less(i, j int) bool { return d[i].GetName() < d[j].GetName() }
+
+// Swap swaps two databases.
+func (d Databases) Swap(i, j int) { d[i], d[j] = d[j], d[i] }
 
 const (
 	// rdsEndpointSuffix is the RDS/Aurora endpoint suffix.

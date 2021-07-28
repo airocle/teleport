@@ -431,7 +431,7 @@ func TestDatabasesCRUDRBAC(t *testing.T) {
 	// Prepare a couple of database resources.
 	devDatabase, err := types.NewDatabaseV3(types.Metadata{
 		Name:   "dev",
-		Labels: map[string]string{"env": "dev"},
+		Labels: map[string]string{"env": "dev", types.OriginLabel: types.OriginDynamic},
 	}, types.DatabaseSpecV3{
 		Protocol: libdefaults.ProtocolPostgres,
 		URI:      "localhost:5432",
@@ -439,7 +439,7 @@ func TestDatabasesCRUDRBAC(t *testing.T) {
 	require.NoError(t, err)
 	adminDatabase, err := types.NewDatabaseV3(types.Metadata{
 		Name:   "admin",
-		Labels: map[string]string{"env": "prod"},
+		Labels: map[string]string{"env": "prod", types.OriginLabel: types.OriginDynamic},
 	}, types.DatabaseSpecV3{
 		Protocol: libdefaults.ProtocolMySQL,
 		URI:      "localhost:3306",
@@ -467,10 +467,10 @@ func TestDatabasesCRUDRBAC(t *testing.T) {
 	require.NoError(t, err)
 
 	// Dev shouldn't be able to update labels on the prod database.
-	adminDatabase.SetStaticLabels(map[string]string{"env": "dev"})
+	adminDatabase.SetStaticLabels(map[string]string{"env": "dev", types.OriginLabel: types.OriginDynamic})
 	err = devClt.UpdateDatabase(ctx, adminDatabase)
 	require.True(t, trace.IsAccessDenied(err))
-	adminDatabase.SetStaticLabels(map[string]string{"env": "prod"}) // Reset.
+	adminDatabase.SetStaticLabels(map[string]string{"env": "prod", types.OriginLabel: types.OriginDynamic}) // Reset.
 
 	// Dev shouldn't be able to get prod database...
 	_, err = devClt.GetDatabase(ctx, adminDatabase.GetName())
