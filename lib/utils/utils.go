@@ -520,6 +520,20 @@ func RemoveFromSlice(slice []string, values ...string) []string {
 	return output
 }
 
+// AppendIfNotExists make a copy of the slice and append the value
+// to the slice if the value doesn't already exist.
+func AppendIfNotExists(slice []string, item string) []string {
+	out := make([]string, 0, len(slice))
+	out = append(out, slice...)
+
+	for _, v := range out {
+		if v == item {
+			return out
+		}
+	}
+	return append(out, item)
+}
+
 // CheckCertificateFormatFlag checks if the certificate format is valid.
 func CheckCertificateFormatFlag(s string) (string, error) {
 	switch s {

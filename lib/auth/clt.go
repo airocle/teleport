@@ -144,7 +144,8 @@ func NewHTTPClient(cfg client.Config, tls *tls.Config, params ...roundtrip.Clien
 	// multiplexer for protocol detection. Unless next protocol is specified
 	// it will attempt to upgrade to HTTP2 and at that point there is no way
 	// to distinguish between HTTP2/JSON or GPRC.
-	tls.NextProtos = []string{teleport.HTTPNextProtoTLS}
+	tls.NextProtos = utils.AppendIfNotExists(tls.NextProtos, teleport.HTTPNextProtoTLS)
+	tls.NextProtos = utils.RemoveFromSlice(tls.NextProtos, teleport.HTTP2NextProtoTLS)
 
 	transport := &http.Transport{
 		// notice that below roundtrip.Client is passed
