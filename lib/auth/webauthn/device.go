@@ -5,18 +5,18 @@ import (
 	"crypto/x509"
 
 	"github.com/duo-labs/webauthn/protocol/webauthncose"
-	"github.com/duo-labs/webauthn/webauthn"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
 
+	wan "github.com/duo-labs/webauthn/webauthn"
 	log "github.com/sirupsen/logrus"
 )
 
 // https://datatracker.ietf.org/doc/html/rfc8152#section-13.1
 const curveP256CBOR = 1
 
-func deviceToCredential(dev *types.MFADevice, idOnly bool) (webauthn.Credential, bool) {
+func deviceToCredential(dev *types.MFADevice, idOnly bool) (wan.Credential, bool) {
 	switch dev := dev.Device.(type) {
 	case *types.MFADevice_U2F:
 		var pubKey []byte
@@ -25,24 +25,24 @@ func deviceToCredential(dev *types.MFADevice, idOnly bool) (webauthn.Credential,
 			pubKey, err = keyDERToCBOR(dev.U2F.PubKey)
 			if err != nil {
 				log.Warnf("WebAuthn: failed to convert U2F device key to CBOR: %v", err)
-				return webauthn.Credential{}, false
+				return wan.Credential{}, false
 			}
 		}
 
-		var authenticator webauthn.Authenticator
+		var authenticator wan.Authenticator
 		if !idOnly {
-			authenticator = webauthn.Authenticator{
+			authenticator = wan.Authenticator{
 				SignCount: dev.U2F.Counter,
 			}
 		}
 
-		return webauthn.Credential{
+		return wan.Credential{
 			ID:            dev.U2F.KeyHandle,
 			PublicKey:     pubKey,
 			Authenticator: authenticator,
 		}, true
 	default:
-		return webauthn.Credential{}, false
+		return wan.Credential{}, false
 	}
 }
 

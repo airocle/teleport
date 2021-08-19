@@ -11,8 +11,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/auth/mocku2f"
-	"github.com/gravitational/teleport/lib/auth/webauthn"
 	"github.com/stretchr/testify/require"
+
+	wantypes "github.com/gravitational/teleport/api/types/webauthn"
+	wanlib "github.com/gravitational/teleport/lib/auth/webauthn"
 )
 
 const currentCounter = 10
@@ -39,12 +41,12 @@ func TestLoginFlow_BeginFinish_u2f(t *testing.T) {
 	}
 	identity := &fakeIdentity{
 		User:        user,
-		SessionData: make(map[string]*webauthn.SessionData),
+		SessionData: make(map[string]*wantypes.SessionData),
 	}
 
 	u2fConfig := types.U2F{AppID: "https://example.com:3080"}
-	webConfig := webauthn.Config{RPID: "example.com"}
-	webLogin := webauthn.LoginFlow{
+	webConfig := wanlib.Config{RPID: "example.com"}
+	webLogin := wanlib.LoginFlow{
 		U2F:      &u2fConfig,
 		Webauthn: &webConfig,
 		Identity: identity,
@@ -97,7 +99,7 @@ func keyToMFADevice(dev *mocku2f.Key, counter uint32, addedAt, lastUsed time.Tim
 type fakeIdentity struct {
 	User           *types.UserV2
 	UpdatedDevices []*types.MFADevice
-	SessionData    map[string]*webauthn.SessionData
+	SessionData    map[string]*wantypes.SessionData
 }
 
 func (f *fakeIdentity) GetUser(user string, withSecrets bool) (types.User, error) {
@@ -113,12 +115,12 @@ func (f *fakeIdentity) UpsertMFADevice(ctx context.Context, user string, d *type
 	return nil
 }
 
-func (f *fakeIdentity) UpsertWebAuthnSessionData(user, sessionID string, sd *webauthn.SessionData) error {
+func (f *fakeIdentity) UpsertWebAuthnSessionData(user, sessionID string, sd *wantypes.SessionData) error {
 	f.SessionData[sessionDataKey(user, sessionID)] = sd
 	return nil
 }
 
-func (f *fakeIdentity) GetWebAuthnSessionData(user, sessionID string) (*webauthn.SessionData, error) {
+func (f *fakeIdentity) GetWebAuthnSessionData(user, sessionID string) (*wantypes.SessionData, error) {
 	sd, ok := f.SessionData[sessionDataKey(user, sessionID)]
 	if !ok {
 		return nil, errors.New("not found")

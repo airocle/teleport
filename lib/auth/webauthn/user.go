@@ -1,20 +1,21 @@
 package webauthn
 
 import (
-	"github.com/duo-labs/webauthn/webauthn"
 	"github.com/gravitational/teleport/api/types"
+
+	wan "github.com/duo-labs/webauthn/webauthn"
 )
 
 // webUser implements a WebAuthn protocol user.
 // It is used to provide user information to WebAuthn APIs, but has no direct
 // counterpart in storage nor in other packages.
 type webUser struct {
-	credentials []webauthn.Credential
+	credentials []wan.Credential
 	user        types.User
 }
 
 func newWebUser(user types.User, idOnly bool, devices []*types.MFADevice) *webUser {
-	var credentials []webauthn.Credential
+	var credentials []wan.Credential
 	for _, dev := range devices {
 		c, ok := deviceToCredential(dev, idOnly)
 		if ok {
@@ -44,6 +45,6 @@ func (w *webUser) WebAuthnIcon() string {
 	return ""
 }
 
-func (w *webUser) WebAuthnCredentials() []webauthn.Credential {
+func (w *webUser) WebAuthnCredentials() []wan.Credential {
 	return w.credentials
 }
