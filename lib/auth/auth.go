@@ -48,6 +48,7 @@ import (
 	apiutils "github.com/gravitational/teleport/api/utils"
 	"github.com/gravitational/teleport/lib/auth/keystore"
 	"github.com/gravitational/teleport/lib/auth/u2f"
+	"github.com/gravitational/teleport/lib/auth/webauthn"
 	"github.com/gravitational/teleport/lib/backend"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/events"
@@ -2491,6 +2492,20 @@ func (a *Server) mfaAuthChallenge(ctx context.Context, user string, u2fStorage u
 				AppID:     ch.AppID,
 			})
 		}
+	}
+	// TODO(codingllama): WebAuthn devices/challenge
+	if false {
+		webLogin := &webauthn.LoginFlow{
+			U2F:      u2fPref,
+			Webauthn: nil, // webPref,
+			Identity: nil, // webauthn.WithDevices(webDevs, a.Identity),
+		}
+		assertion, err := webLogin.Begin(ctx, user)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		_ = assertion
+		// challenge.Webauthn = assertion
 	}
 	return challenge, nil
 }

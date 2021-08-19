@@ -20,6 +20,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/gravitational/teleport/lib/auth/webauthn"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/gravitational/teleport/api/constants"
@@ -125,14 +126,34 @@ func (s *Server) authenticateUser(ctx context.Context, req AuthenticateUserReque
 		return nil, trace.Wrap(err)
 	}
 
+	user := req.Username
 	switch {
+	// TODO(codingllama): Webauthn challenge response
+	case false:
+		webLogin := &webauthn.LoginFlow{
+			U2F:      nil, // u2fPref,
+			Webauthn: nil, // webPref,
+			Identity: nil, // s.Identity,
+		}
+		var mfaDev *types.MFADevice
+		if err := s.WithUserLock(user, func() error {
+			var err error
+			mfaDev, err = webLogin.Finish(ctx, user, nil /* req.Webauthn.Response */)
+			return err
+		}); err != nil {
+			// provide obscure message on purpose, while logging the real
+			// error server side
+			log.Debugf("WebAuthn: failed to authenticate: %v", err)
+			return nil, trace.AccessDenied("invalid webauthn response")
+		}
+		return mfaDev, nil
 	case req.U2F != nil:
 		// authenticate using U2F - code checks challenge response
 		// signed by U2F device of the user
 		var mfaDev *types.MFADevice
-		err := s.WithUserLock(req.Username, func() error {
+		err := s.WithUserLock(user, func() error {
 			var err error
-			mfaDev, err = s.CheckU2FSignResponse(ctx, req.Username, &req.U2F.SignResponse)
+			mfaDev, err = s.CheckU2FSignResponse(ctx, user, &req.U2F.SignResponse)
 			return err
 		})
 		if err != nil {
@@ -150,8 +171,8 @@ func (s *Server) authenticateUser(ctx context.Context, req AuthenticateUserReque
 		return mfaDev, nil
 	case req.OTP != nil:
 		var mfaDev *types.MFADevice
-		err := s.WithUserLock(req.Username, func() error {
-			res, err := s.checkPassword(req.Username, req.OTP.Password, req.OTP.Token)
+		err := s.WithUserLock(user, func() error {
+			res, err := s.checkPassword(user, req.OTP.Password, req.OTP.Token)
 			if err != nil {
 				return trace.Wrap(err)
 			}
@@ -175,23 +196,23 @@ func (s *Server) authenticateUser(ctx context.Context, req AuthenticateUserReque
 		case constants.SecondFactorOptional:
 			// 2FA is optional. Make sure that a user does not have MFA devices
 			// registered.
-			devs, err := s.GetMFADevices(ctx, req.Username)
+			devs, err := s.GetMFADevices(ctx, user)
 			if err != nil && !trace.IsNotFound(err) {
 				return nil, trace.Wrap(err)
 			}
 			if len(devs) != 0 {
-				log.Warningf("MFA bypass attempt by user %q, access denied.", req.Username)
+				log.Warningf("MFA bypass attempt by user %q, access denied.", user)
 				return nil, trace.AccessDenied("missing second factor authentication")
 			}
 		default:
 			// Some form of MFA is required but none provided. Either client is
 			// buggy (didn't send MFA response) or someone is trying to bypass
 			// MFA.
-			log.Warningf("MFA bypass attempt by user %q, access denied.", req.Username)
+			log.Warningf("MFA bypass attempt by user %q, access denied.", user)
 			return nil, trace.AccessDenied("missing second factor")
 		}
-		err := s.WithUserLock(req.Username, func() error {
-			return s.checkPasswordWOToken(req.Username, req.Pass.Password)
+		err := s.WithUserLock(user, func() error {
+			return s.checkPasswordWOToken(user, req.Pass.Password)
 		})
 		if err != nil {
 			// provide obscure message on purpose, while logging the real
