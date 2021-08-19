@@ -9,6 +9,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
+
 	log "github.com/sirupsen/logrus"
 )
 
