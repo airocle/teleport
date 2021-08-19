@@ -6,6 +6,8 @@ import (
 )
 
 // webUser implements a WebAuthn protocol user.
+// It is used to provide user information to WebAuthn APIs, but has no direct
+// counterpart in storage nor in other packages.
 type webUser struct {
 	credentials []webauthn.Credential
 	user        types.User

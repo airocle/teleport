@@ -33,12 +33,12 @@ const (
 
 // loginIdentity represents the subset of Identity methods used by LoginFlow.
 type loginIdentity interface {
-	GetUser(userID string, withSecrets bool) (types.User, error)
-	GetMFADevices(ctx context.Context, userID string) ([]*types.MFADevice, error)
+	GetUser(user string, withSecrets bool) (types.User, error)
+	GetMFADevices(ctx context.Context, user string) ([]*types.MFADevice, error)
 	UpsertMFADevice(ctx context.Context, user string, d *types.MFADevice) error
-	UpsertWebAuthnSessionData(userID, sessionID string, sd *SessionData) error
-	GetWebAuthnSessionData(userID, sessionID string) (*SessionData, error)
-	DeleteWebAuthnSessionData(userID, sessionID string) error
+	UpsertWebAuthnSessionData(user, sessionID string, sd *SessionData) error
+	GetWebAuthnSessionData(user, sessionID string) (*SessionData, error)
+	DeleteWebAuthnSessionData(user, sessionID string) error
 }
 
 type loginIdentityWithDevices struct {
@@ -68,11 +68,11 @@ type LoginFlow struct {
 	Identity loginIdentity
 }
 
-func (f *LoginFlow) Begin(ctx context.Context, userID string) (*CredentialAssertion, error) {
+func (f *LoginFlow) Begin(ctx context.Context, user string) (*CredentialAssertion, error) {
 	// Fetch existing user devices. We need the devices both to set the allowed
 	// credentials for the user (webUser.credentials) and to determine if the U2F
 	// appid extension is necessary.
-	devices, err := f.Identity.GetMFADevices(ctx, userID)
+	devices, err := f.Identity.GetMFADevices(ctx, user)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -85,13 +85,11 @@ func (f *LoginFlow) Begin(ctx context.Context, userID string) (*CredentialAssert
 	}
 
 	// Fetch the user with secrets, their WebAuthn ID is inside.
-	user, err := f.Identity.GetUser(userID, true /* withSecrets */)
+	storedUser, err := f.Identity.GetUser(user, true /* withSecrets */)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-
-	// TODO(codingllama): Create user WebAuthn ID if necessary.
-	u := newWebUser(user, true /* idOnly */, devices)
+	u := newWebUser(storedUser, true /* idOnly */, devices)
 
 	// Create the WebAuthn object and create a new challenge.
 	web, err := newWebAuthn(f.Webauthn, f.Webauthn.RPID, "" /* origin */)
@@ -105,14 +103,14 @@ func (f *LoginFlow) Begin(ctx context.Context, userID string) (*CredentialAssert
 
 	// Store SessionData - it's checked against the user response by
 	// LoginFlow.Finish().
-	if err := f.Identity.UpsertWebAuthnSessionData(userID, loginSessionID, sessionData); err != nil {
+	if err := f.Identity.UpsertWebAuthnSessionData(user, loginSessionID, sessionData); err != nil {
 		return nil, trace.Wrap(err)
 	}
 
 	return assertion, nil
 }
 
-func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionResponse, userID string) (*types.MFADevice, error) {
+func (f *LoginFlow) Finish(ctx context.Context, user string, resp *CredentialAssertionResponse) (*types.MFADevice, error) {
 	parsedResp, err := parseCredentialResponse(resp)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -122,7 +120,10 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 	// the credential comes from an U2F device.
 	rpID := f.Webauthn.RPID
 	var usingAppID bool
-	appidExt, ok := parsedResp.Extensions["appid"]
+	// TODO(codingllama): Consider ignoring appid and basing the decision solely
+	//  in the device type. Seems safer than assuming compliance.
+	// Do not read from parsedResp here, extensions don't carry over.
+	appidExt, ok := resp.Extensions["appid"]
 	if ok {
 		// Let's try and be as lenient as we can with what comes here.
 		var err error
@@ -144,7 +145,7 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 
 	// Find the device used to sign the credentials. It must be a previously
 	// registered device.
-	devices, err := f.Identity.GetMFADevices(ctx, userID)
+	devices, err := f.Identity.GetMFADevices(ctx, user)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -159,15 +160,15 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 	}
 
 	// Fetch the user with secrets, their WebAuthn ID is inside.
-	user, err := f.Identity.GetUser(userID, true /* withSecrets */)
+	storedUser, err := f.Identity.GetUser(user, true /* withSecrets */)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	u := newWebUser(user, false /* idOnly */, []*types.MFADevice{dev})
+	u := newWebUser(storedUser, false /* idOnly */, []*types.MFADevice{dev})
 
 	// Fetch the previously-stored SessionData, so it's checked against the user
 	// response.
-	sessionData, err := f.Identity.GetWebAuthnSessionData(userID, loginSessionID)
+	sessionData, err := f.Identity.GetWebAuthnSessionData(user, loginSessionID)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -187,20 +188,27 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 	if err := setCounterAndTimestamps(dev, credential); err != nil {
 		return nil, trace.Wrap(err)
 	}
-	if err := f.Identity.UpsertMFADevice(ctx, userID, dev); err != nil {
+	if err := f.Identity.UpsertMFADevice(ctx, user, dev); err != nil {
 		return nil, trace.Wrap(err)
 	}
 
 	// The user just solved this challenge, so let's make sure it won't be used
 	// again.
-	if err := f.Identity.DeleteWebAuthnSessionData(userID, loginSessionID); err != nil {
-		log.Warnf("WebAuthn: failed to delete SessionData for user %v", userID)
+	if err := f.Identity.DeleteWebAuthnSessionData(user, loginSessionID); err != nil {
+		log.Warnf("WebAuthn: failed to delete SessionData for user %v", user)
 	}
 
 	return dev, nil
 }
 
 func parseCredentialResponse(resp *CredentialAssertionResponse) (*protocol.ParsedCredentialAssertionData, error) {
+	// Remove extensions before Marshal, they are not supported.
+	exts := resp.PublicKeyCredential.Extensions
+	resp.PublicKeyCredential.Extensions = nil
+	defer func() {
+		resp.PublicKeyCredential.Extensions = exts
+	}()
+
 	// This is a roundabout way of getting resp validated, but unfortunately the
 	// APIs don't provide a better method (and it seems better than duplicating
 	// library code here).
@@ -208,6 +216,7 @@ func parseCredentialResponse(resp *CredentialAssertionResponse) (*protocol.Parse
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+
 	return protocol.ParseCredentialRequestResponseBody(bytes.NewReader(body))
 }
 

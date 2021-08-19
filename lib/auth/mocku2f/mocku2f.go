@@ -188,6 +188,23 @@ func (muk *Key) SignResponse(req *u2f.SignRequest) (*u2f.SignResponse, error) {
 	}
 	clientDataHash := sha256.Sum256(clientDataJSON)
 
+	signData, err := muk.signAuthentication(appIDHash[:], clientDataHash[:])
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return &u2f.SignResponse{
+		KeyHandle:     req.KeyHandle,
+		SignatureData: encodeBase64(signData),
+		ClientData:    encodeBase64(clientDataJSON),
+	}, nil
+}
+
+func (muk *Key) signAuthentication(appIDHash, clientDataHash []byte) ([]byte, error) {
+	counterBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(counterBytes, muk.counter)
+	muk.counter++
+
 	var dataToSign []byte
 	dataToSign = append(dataToSign, appIDHash[:]...)
 	dataToSign = append(dataToSign, 1) // user presence
@@ -207,11 +224,7 @@ func (muk *Key) SignResponse(req *u2f.SignRequest) (*u2f.SignResponse, error) {
 	signData = append(signData, counterBytes[:]...)
 	signData = append(signData, sig[:]...)
 
-	return &u2f.SignResponse{
-		KeyHandle:     req.KeyHandle,
-		SignatureData: encodeBase64(signData),
-		ClientData:    encodeBase64(clientDataJSON),
-	}, nil
+	return signData, nil
 }
 
 func (muk *Key) SetCounter(counter uint32) {
