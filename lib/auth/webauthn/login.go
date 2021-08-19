@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/duo-labs/webauthn/protocol"
 	"github.com/duo-labs/webauthn/webauthn"
 	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/trace"
+
 	log "github.com/sirupsen/logrus"
 )
 
@@ -24,43 +25,89 @@ type CredentialAssertion = protocol.CredentialAssertion
 // login.
 type CredentialAssertionResponse = protocol.CredentialAssertionResponse
 
+type SessionData = webauthn.SessionData
+
+const (
+	loginSessionID = "login"
+)
+
+// loginIdentity represents the subset of Identity methods used by LoginFlow.
+type loginIdentity interface {
+	GetUser(userID string, withSecrets bool) (types.User, error)
+	GetMFADevices(ctx context.Context, userID string) ([]*types.MFADevice, error)
+	UpsertMFADevice(ctx context.Context, user string, d *types.MFADevice) error
+	UpsertWebAuthnSessionData(userID, sessionID string, sd *SessionData) error
+	GetWebAuthnSessionData(userID, sessionID string) (*SessionData, error)
+	DeleteWebAuthnSessionData(userID, sessionID string) error
+}
+
+type loginIdentityWithDevices struct {
+	loginIdentity
+	devices []*types.MFADevice
+}
+
+func (l *loginIdentityWithDevices) GetMFADevices(_ context.Context, _ string) ([]*types.MFADevice, error) {
+	return l.devices, nil
+}
+
+// WithDevices attributes a fixed set of devices to a loginIdentity instance.
+// Useful for callers that read and sort devices prior to beginning login.
+func WithDevices(devs []*types.MFADevice, l loginIdentity) loginIdentity {
+	return &loginIdentityWithDevices{
+		loginIdentity: l,
+		devices:       devs,
+	}
+}
+
 // LoginFlow represents the WebAuthn login procedure.
 type LoginFlow struct {
 	U2F      *types.U2F
 	Webauthn *Config
-	Identity services.Identity
+	// Identity is typically an implementation of the Identity service, ie, an
+	// object with access to user, device and MFA storage.
+	Identity loginIdentity
 }
 
 func (f *LoginFlow) Begin(ctx context.Context, userID string) (*CredentialAssertion, error) {
-	web, err := newWebAuthn(f.Webauthn, f.Webauthn.RPID, "" /* origin */)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	user, err := f.Identity.GetUser(userID, true /* withSecrets */)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
+	// Fetch existing user devices. We need the devices both to set the allowed
+	// credentials for the user (webUser.credentials) and to determine if the U2F
+	// appid extension is necessary.
 	devices, err := f.Identity.GetMFADevices(ctx, userID)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	u := newWebUser(user, true /* idOnly */, devices)
-
 	var opts []webauthn.LoginOption
 	if f.U2F != nil && f.U2F.AppID != "" {
+		// See https://www.w3.org/TR/webauthn-2/#sctn-appid-extension.
 		opts = append(opts, webauthn.WithAssertionExtensions(protocol.AuthenticationExtensions{
 			"appid": f.U2F.AppID,
 		}))
 	}
 
+	// Fetch the user with secrets, their WebAuthn ID is inside.
+	user, err := f.Identity.GetUser(userID, true /* withSecrets */)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	// TODO(codingllama): Create user WebAuthn ID if necessary.
+	u := newWebUser(user, true /* idOnly */, devices)
+
+	// Create the WebAuthn object and create a new challenge.
+	web, err := newWebAuthn(f.Webauthn, f.Webauthn.RPID, "" /* origin */)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
 	assertion, sessionData, err := web.BeginLogin(u, opts...)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
-	// TODO(codingllama): Store session data.
-	_ = sessionData
+	// Store SessionData - it's checked against the user response by
+	// LoginFlow.Finish().
+	if err := f.Identity.UpsertWebAuthnSessionData(userID, loginSessionID, sessionData); err != nil {
+		return nil, trace.Wrap(err)
+	}
 
 	return assertion, nil
 }
@@ -78,7 +125,8 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 	appidExt, ok := parsedResp.Extensions["appid"]
 	if ok {
 		// Let's try and be as lenient as we can with what comes here.
-		usingAppID, err := strconv.ParseBool(strings.ToLower(fmt.Sprint(appidExt)))
+		var err error
+		usingAppID, err = strconv.ParseBool(strings.ToLower(fmt.Sprint(appidExt)))
 		switch {
 		case err != nil:
 			log.Warnf("WebAuthn: failed to parse appid extension (%v)", appidExt)
@@ -86,7 +134,6 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 			return nil, trace.Errorf("appid extension provided but U2F app_id not configured")
 		case usingAppID:
 			rpID = f.U2F.AppID // Allow RPID = AppID for legacy devices
-			usingAppID = true
 		}
 	}
 
@@ -95,6 +142,8 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 		return nil, trace.Wrap(err)
 	}
 
+	// Find the device used to sign the credentials. It must be a previously
+	// registered device.
 	devices, err := f.Identity.GetMFADevices(ctx, userID)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -109,31 +158,46 @@ func (f *LoginFlow) Finish(ctx context.Context, resp *CredentialAssertionRespons
 			"appid extension is true, but credential is not for an U2F device: %q", base64.RawURLEncoding.EncodeToString(parsedResp.RawID))
 	}
 
+	// Fetch the user with secrets, their WebAuthn ID is inside.
 	user, err := f.Identity.GetUser(userID, true /* withSecrets */)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	u := newWebUser(user, false /* idOnly */, []*types.MFADevice{dev})
 
-	// TODO(codingllama): Fetch SessionData from storage.
-	sessionData := &webauthn.SessionData{}
-
-	web, err := newWebAuthn(f.Webauthn, rpID, origin)
+	// Fetch the previously-stored SessionData, so it's checked against the user
+	// response.
+	sessionData, err := f.Identity.GetWebAuthnSessionData(userID, loginSessionID)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
+	// Create a WebAuthn matching the expected RPID and Origin, then verify the
+	// signed challenge.
+	web, err := newWebAuthn(f.Webauthn, rpID, origin)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
 	credential, err := web.ValidateLogin(u, *sessionData, parsedResp)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
-	// TODO(codingllama): Update device in storage?
+	// Update last used timestamp and device counter.
+	if err := setCounterAndTimestamps(dev, credential); err != nil {
+		return nil, trace.Wrap(err)
+	}
+	if err := f.Identity.UpsertMFADevice(ctx, userID, dev); err != nil {
+		return nil, trace.Wrap(err)
+	}
 
-	// TODO(codingllama): Credential to device
-	_ = credential
+	// The user just solved this challenge, so let's make sure it won't be used
+	// again.
+	if err := f.Identity.DeleteWebAuthnSessionData(userID, loginSessionID); err != nil {
+		log.Warnf("WebAuthn: failed to delete SessionData for user %v", userID)
+	}
 
-	return &types.MFADevice{}, nil
+	return dev, nil
 }
 
 func parseCredentialResponse(resp *CredentialAssertionResponse) (*protocol.ParsedCredentialAssertionData, error) {
@@ -147,7 +211,6 @@ func parseCredentialResponse(resp *CredentialAssertionResponse) (*protocol.Parse
 	return protocol.ParseCredentialRequestResponseBody(bytes.NewReader(body))
 }
 
-// TODO(codingllama): Move somewhere else?
 func validateOrigin(origin, rpID string) error {
 	// TODO(codingllama): Check if origin matches the _actual_ RPID.
 	// TODO(codingllama): Check origin against the public addresses of Proxies and
@@ -164,4 +227,15 @@ func findDeviceByID(devices []*types.MFADevice, id []byte) (*types.MFADevice, bo
 		}
 	}
 	return nil, false
+}
+
+func setCounterAndTimestamps(dev *types.MFADevice, credential *webauthn.Credential) error {
+	u2f := dev.GetU2F()
+	if u2f == nil {
+		return fmt.Errorf("webauthn only implemented for U2F devices, got %T", dev.Device)
+	}
+
+	dev.LastUsed = time.Now()
+	u2f.Counter = credential.Authenticator.SignCount
+	return nil
 }
