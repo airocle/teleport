@@ -3,14 +3,14 @@ title: Locking
 description: Temporarily lock out specific access pathways.
 ---
 
-# Session & Identity Locking
+# Session and Identity Locking
 
 Teleport provides a locking mechanism to restrict access to a computing
-environment on an *ad hoc* basis, e.g. to disable a compromised user or
+environment. System administrators can disable a compromised user or
 prevent access during cluster maintenance.
 
-When a lock is in force, all interactions (like SSH/DB/k8s connections or
-certificate requests) matched by the lock's target are rejected.
+When a lock is in force, all interactions like SSH/DB/k8s connections and
+certificate requests matched by the lock's target are rejected.
 A lock can target the following objects or attributes:
 - a Teleport user by the user's name;
 - a Teleport [RBAC](../reference.mdx) role by the role's name;
@@ -28,7 +28,7 @@ A lock can target the following objects or attributes:
 ## Creating a new lock
 
 Locks are modeled as [resources](../../admin-guide.mdx#resources) with `kind:
-lock`.  To easily create a new lock, one can run the `tctl lock` command:
+lock`.  To create a new lock, one can run the `tctl lock` command:
 
 ```
 $ tctl lock --user=foo@example.com --message="Suspicious activity." --ttl=10h
@@ -39,7 +39,7 @@ Note that without specifying `--ttl` or `--expires` the created lock remains in
 force until explicitly removed with `tctl rm`.  Refer to `tctl lock --help` for
 the list of all supported parameters.
 
-Under the hood, `tctl lock` creates a resource similar to the following:
+Under the hood, `tctl lock` creates a resource:
 
 ```yaml
 kind: lock
@@ -70,9 +70,9 @@ lock targeting User:"foo@example.com" is in force: Suspicious activity.
 
 ## Locking mode
 
-If a Teleport component cannot properly synchronize its local lock view with
-the backend, there is a decision to be made about whether to rely on the last
-known locks. This decision strategy is encoded as one of the two modes:
+If a Teleport node or proxy cannot properly synchronize its local lock view
+with the backend, there is a decision to be made about whether to rely on the
+last known locks. This decision strategy is encoded as one of the two modes:
 - `strict` mode causes all interactions to be terminated when the locks are not
   guaranteed to be up to date;
 - `best_effort` mode keeps relying on the most recent locks.
